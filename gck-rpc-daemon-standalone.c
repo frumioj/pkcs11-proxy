@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <stdbool.h>
 
 #include <dlfcn.h>
 #include <pthread.h>
@@ -204,6 +205,89 @@ enum {
 	GCP_RPC_DAEMON_MODE_INETD = 0,
 	GCP_RPC_DAEMON_MODE_SOCKET
 };
+
+void *p11dlopen(const char *filename)
+{
+	return dlopen(filename, RTLD_LAZY);
+}
+
+void *p11dlsym(void *handle, const char *symbol)
+{
+	return dlsym(handle, symbol);
+}
+
+const char *p11dlerror()
+{
+	return dlerror();
+}
+
+int p11dlclose(void **handle)
+{
+	return dlclose(&handle);
+}
+
+#define LOADFLAG			0x11011011
+
+struct p11_module 
+{
+	unsigned int loadFlag;
+	void *handle;
+};
+
+typedef struct p11_module p11_module_t;
+
+CK_RV unloadp11module(void *module)
+{
+	p11_module_t *mod = (p11_module_t *) module;
+
+	if(!mod || mod->loadFlag != LOADFLAG)
+		return CKR_ARGUMENTS_BAD;
+
+	if(p11dlclose(&mod->handle) < 0)
+		return CKR_FUNCTION_FAILED;
+
+	memset(mod, 0, sizeof(*mod));
+
+	free(mod);
+
+	return CKR_OK;
+}
+
+void *loadp11module(const char *mspec, CK_FUNCTION_LIST_PTR_PTR funcs)
+{
+	p11_module_t *mod;
+	CK_RV rv, (*c_get_function_list)(CK_FUNCTION_LIST_PTR_PTR);
+	mod = (p11_module_t *) calloc(1, sizeof(*mod));
+	mod->loadFlag = LOADFLAG;
+
+	if(mspec == NULL)
+		return NULL;
+
+	mod->handle = p11dlopen(mspec);
+
+	if(mod->handle == NULL)
+	{
+		printf("p11dlopen failed: %s\n", p11dlerror());
+		goto failed;
+	}
+
+	c_get_function_list = (CK_RV (*)(CK_FUNCTION_LIST_PTR_PTR)) p11dlsym(mod->handle, "C_GetFunctionList");
+
+	if(!c_get_function_list)
+		goto failed;
+
+	rv = c_get_function_list(funcs);
+	
+	if (rv == CKR_OK)
+		return (void *) mod;
+	else
+		printf("C_GetFunctionList failed %lx", rv);
+
+failed:
+
+	unloadp11module((void *) mod);
+	return NULL;
+}
 
 int main(int argc, char *argv[])
 {
