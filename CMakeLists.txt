@@ -23,6 +23,9 @@ add_executable (pkcs11-daemon ${GUI_TYPE} ${PKCS11_DAEMON_SRCS})
 
 set_target_properties(pkcs11-proxy PROPERTIES VERSION 0.1 SOVERSION 0)
 
+include_directories("/usr/local/include")
+link_directories("/usr/local/lib")
+
 if (WIN32)
   include_directories("ext/include")
 
