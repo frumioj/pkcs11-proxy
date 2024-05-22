@@ -188,6 +188,8 @@ static CK_C_INITIALIZE_ARGS p11_init_args = {
 #endif
 
 static int is_running = 1;
+static int MAX_MODULES = 5 ;
+static int LINELEN = 255 ;
 
 static int usage(void)
 {
@@ -289,6 +291,13 @@ failed:
 	return NULL;
 }
 
+int read_config(char *filename, char **module_paths){
+	module_paths[0] = "/home/johnk/libpkcs11.so" ;
+	module_paths[1] = "/usr/local/softhsm/libpkcs11.so" ;
+	
+	return 0 ;
+}
+
 int main(int argc, char *argv[])
 {
 	CK_C_GetFunctionList func_get_list;
@@ -300,7 +309,14 @@ int main(int argc, char *argv[])
 	CK_RV rv;
 	CK_C_INITIALIZE_ARGS init_args;
 	GckRpcTlsPskState *tls;
+	char **module_paths = calloc(MAX_MODULES, LINELEN) ;
 
+	if (read_config("./modules.txt", module_paths) != 0){
+		fprintf(stderr, "could not load module paths\n") ;
+	} else {
+		fprintf(stderr, "GOT MODULES\n") ;
+	}
+	
 	/* The module to load is the argument */
 	if (argc != 2 && argc != 3)
 		usage();
