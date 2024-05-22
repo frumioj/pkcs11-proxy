@@ -187,12 +187,12 @@ static CK_C_INITIALIZE_ARGS p11_init_args = {
 };
 #endif
 
-static int LINELEN = 255 ;
-static int MAX_MODULES = 5 ;
-
 static int is_running = 1;
+
 static int MAX_MODULES = 5 ;
 static int LINELEN = 255 ;
+static CK_FUNCTION_LIST_PTR *pos = NULL;
+static void **modhandles = NULL;
 
 static int usage(void)
 {
@@ -211,6 +211,15 @@ enum {
 	GCP_RPC_DAEMON_MODE_SOCKET
 };
 
+void truncate_newline(char *string){
+	size_t len = strlen(string);
+	
+	if (len > 0 && string[len-1] == '\n') {
+		string[--len] = '\0';
+	}
+	return ;
+}
+
 int read_config(const char *config_filename, char **paths)
 {
 	FILE *fptr;
@@ -225,9 +234,10 @@ int read_config(const char *config_filename, char **paths)
 		paths[0] = malloc(LINELEN * sizeof(char)) ;
 		while(fgets(paths[i++], LINELEN, fptr) &&
 		      i <= MAX_MODULES) {
+			truncate_newline(paths[i-1]) ;
 			// allocate memory for the next pathname
 			paths[i] = malloc(LINELEN * sizeof(char)) ;
-			printf("%s", paths[i-1]);
+			printf("PATH: %s\n", paths[i-1]);
 		}
 
 	} else {
@@ -237,11 +247,13 @@ int read_config(const char *config_filename, char **paths)
 
 	// Close the file
 	fclose(fptr);
-	return 0 ;
+	printf("Leaving read_config\n") ;
+	return i-1 ;
 }
 
 void *p11dlopen(const char *filename)
 {
+	fprintf(stderr, "dlopen: trying file %s\n", filename) ;
 	return dlopen(filename, RTLD_LAZY);
 }
 
@@ -287,6 +299,20 @@ CK_RV unloadp11module(void *module)
 	return CKR_OK;
 }
 
+int init(){
+	if(pos && pos != NULL){
+		free(pos);
+		pos = NULL;
+	}
+
+	if(modhandles && modhandles != NULL){
+		free(modhandles);
+		modhandles = NULL;
+	}
+
+	return 0 ;
+}
+
 void *loadp11module(const char *mspec, CK_FUNCTION_LIST_PTR_PTR funcs)
 {
 	p11_module_t *mod;
@@ -301,7 +327,7 @@ void *loadp11module(const char *mspec, CK_FUNCTION_LIST_PTR_PTR funcs)
 
 	if(mod->handle == NULL)
 	{
-		printf("p11dlopen failed: %s\n", p11dlerror());
+		printf("loadp11module: p11dlopen failed: %s\n", p11dlerror());
 		goto failed;
 	}
 
@@ -323,13 +349,6 @@ failed:
 	return NULL;
 }
 
-int read_config(char *filename, char **module_paths){
-	module_paths[0] = "/home/johnk/libpkcs11.so" ;
-	module_paths[1] = "/usr/local/softhsm/libpkcs11.so" ;
-	
-	return 0 ;
-}
-
 int main(int argc, char *argv[])
 {
 	CK_C_GetFunctionList func_get_list;
@@ -343,27 +362,55 @@ int main(int argc, char *argv[])
 	GckRpcTlsPskState *tls;
 	char **module_paths = calloc(MAX_MODULES, LINELEN) ;
 
-	if (read_config("./modules.txt", module_paths) != 0){
-		fprintf(stderr, "could not load module paths\n") ;
-	} else {
-		fprintf(stderr, "GOT MODULES\n") ;
+	if (init() != 0){
+		fprintf(stderr,"could not initialise pointers\n") ;
+		exit(1) ;
 	}
 
-	/* The module to load is the argument */
+	int number_modules = read_config(argv[1], module_paths) ;
+	
+	if ( number_modules <= 0){
+		fprintf(stderr, "could not load module paths\n") ;
+		exit(1) ;
+	} else {
+		fprintf(stderr, "GOT %d MODULES from config\n", number_modules) ;
+	}
+
+	/* The path to config file is the first argument argv[1] */
 	if (argc != 2 && argc != 3)
 		usage();
 
         openlog("pkcs11-proxy",LOG_CONS|LOG_PID,LOG_DAEMON);
 
-	/* Load the library */
-	module = dlopen(argv[1], RTLD_NOW);
-	if (!module) {
-		fprintf(stderr, "couldn't open library: %s: %s\n", argv[1],
-			dlerror());
-		exit(1);
+	modhandles = (void **) calloc(nCounter, sizeof(void *));
+
+	if(!modhandles){
+		return CKR_GENERAL_ERROR;
 	}
 
+	pos = new CK_FUNCTION_LIST_PTR[number_modules];
+
+	if(!pos){
+		return CKR_GENERAL_ERROR;
+	}
+
+	for(int i = 0; i < number_modules; i++){
+		/* Load the library */
+		//module = dlopen(argv[1], RTLD_NOW);
+		
+		// @@TODO: this loads only the first library and gets funcs
+		// into exactly one ptr, not an array of them
+		module = loadp11module(module_paths[0], &funcs) ;
+		
+		if (!module) {
+			fprintf(stderr, "couldn't open library: %s: %s\n", argv[1],
+				dlerror());
+			exit(1);
+		}
+	}
+	
 	/* Lookup the appropriate function in library */
+	/*
 	func_get_list =
 	    (CK_C_GetFunctionList) dlsym(module, "C_GetFunctionList");
 	if (!func_get_list) {
@@ -372,9 +419,9 @@ int main(int argc, char *argv[])
 			argv[1], dlerror());
 		exit(1);
 	}
-
+	*/
 	/* Get the function list */
-	rv = (func_get_list) (&funcs);
+	/*rv = (func_get_list) (&funcs);
 	if (rv != CKR_OK || !funcs) {
 		fprintf(stderr,
 			"couldn't get function list from C_GetFunctionList"
@@ -382,7 +429,8 @@ int main(int argc, char *argv[])
 			argv[1], (int)rv);
 		exit(1);
 	}
-
+	*/
+	
 	/* RPC layer expects initialized module */
 	memset(&init_args, 0, sizeof(init_args));
 	init_args.flags = CKF_OS_LOCKING_OK;
