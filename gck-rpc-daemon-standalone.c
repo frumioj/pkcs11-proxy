@@ -187,6 +187,9 @@ static CK_C_INITIALIZE_ARGS p11_init_args = {
 };
 #endif
 
+static int LINELEN = 255 ;
+static int MAX_MODULES = 5 ;
+
 static int is_running = 1;
 
 static int usage(void)
@@ -205,6 +208,35 @@ enum {
 	GCP_RPC_DAEMON_MODE_INETD = 0,
 	GCP_RPC_DAEMON_MODE_SOCKET
 };
+
+int read_config(const char *config_filename, char **paths)
+{
+	FILE *fptr;
+	int i = 0 ;
+	// Open a file in read mode
+	fptr = fopen(config_filename, "r");
+	
+	// If the file exists
+	if(fptr != NULL) {
+		
+		// Read the content and print it
+		paths[0] = malloc(LINELEN * sizeof(char)) ;
+		while(fgets(paths[i++], LINELEN, fptr) &&
+		      i <= MAX_MODULES) {
+			// allocate memory for the next pathname
+			paths[i] = malloc(LINELEN * sizeof(char)) ;
+			printf("%s", paths[i-1]);
+		}
+
+	} else {
+		printf("Not able to open the file.");
+		return -1 ;
+	}
+
+	// Close the file
+	fclose(fptr);
+	return 0 ;
+}
 
 void *p11dlopen(const char *filename)
 {
@@ -300,7 +332,8 @@ int main(int argc, char *argv[])
 	CK_RV rv;
 	CK_C_INITIALIZE_ARGS init_args;
 	GckRpcTlsPskState *tls;
-
+	char **module_paths = malloc(MAX_MODULES * sizeof(char *)) ;
+	
 	/* The module to load is the argument */
 	if (argc != 2 && argc != 3)
 		usage();
